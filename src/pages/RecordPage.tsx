@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Mic, StopCircle, Link as LinkIcon, Timer, ShieldAlert, Check } from 'lucide-react';
+import { Mic, StopCircle, Link as LinkIcon, Timer, ShieldAlert, Check, RotateCcw } from 'lucide-react';
 import { AudioBox } from '../components/AudioBox';
+import { LiveWaveform } from '../components/LiveWaveform';
 
 function formatTime(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -26,7 +27,9 @@ export const RecordPage: React.FC = () => {
   const timerRef = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const copyTimerRef = useRef<number | null>(null);
-  const [levels, setLevels] = useState<number>(0);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sessionIdRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -37,6 +40,10 @@ export const RecordPage: React.FC = () => {
       }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      if (audioCtxRef.current) {
+        try { audioCtxRef.current.close(); } catch {}
+        audioCtxRef.current = null;
       }
     };
   }, []);
@@ -50,6 +57,7 @@ export const RecordPage: React.FC = () => {
     try {
       setStatus('Recording…');
       chunksRef.current = [];
+      const sessionId = ++sessionIdRef.current;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const mimeTypeOptions = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
@@ -59,49 +67,46 @@ export const RecordPage: React.FC = () => {
       const analyserNode = ctx.createAnalyser();
       analyserNode.fftSize = 512;
       source.connect(analyserNode);
-      const meterId = window.setInterval(() => {
-        const buf = new Uint8Array(analyserNode.frequencyBinCount);
-        analyserNode.getByteTimeDomainData(buf);
-        // compute simple RMS
-        let sum = 0;
-        for (let i = 0; i < buf.length; i++) {
-          const v = (buf[i] - 128) / 128;
-          sum += v * v;
-        }
-        const rms = Math.sqrt(sum / buf.length);
-        setLevels(rms);
-      }, 50);
+      analyserRef.current = analyserNode;
+      audioCtxRef.current = ctx;
       const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mr;
       mr.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
       mr.onstop = async () => {
+        const isStale = sessionId !== sessionIdRef.current;
         if (timerRef.current) window.clearInterval(timerRef.current);
-        if (meterId) window.clearInterval(meterId);
+        analyserRef.current = null;
+        if (audioCtxRef.current) {
+          try { await audioCtxRef.current.close(); } catch {}
+          audioCtxRef.current = null;
+        }
         const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' });
         const localUrl = URL.createObjectURL(blob);
-        setAudioUrl(localUrl);
-        setStatus('Uploading…');
+        if (!isStale) setAudioUrl(localUrl);
+        if (!isStale) setStatus('Uploading…');
         try {
           const form = new FormData();
           form.append('file', blob, `memo-${Date.now()}.webm`);
           const res = await fetch('/api/upload', { method: 'POST', body: form });
           if (!res.ok) throw new Error('Upload failed');
           const { shareUrl: url } = await res.json();
-          setShareUrl(url);
-          setStatus('Ready to share!');
+          if (!isStale) setShareUrl(url);
+          if (!isStale) setStatus('Ready to share!');
           if ('clipboard' in navigator) {
             try {
               await navigator.clipboard.writeText(url);
-              setCopied(true);
-              if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
-              copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
+              if (!isStale) {
+                setCopied(true);
+                if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
+                copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
+              }
             } catch {}
           }
         } catch (err) {
           console.error(err);
-          setStatus('Upload error');
+          if (!isStale) setStatus('Upload error');
         }
       };
       mr.start(100);
@@ -125,6 +130,37 @@ export const RecordPage: React.FC = () => {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    if (audioCtxRef.current) {
+      try { audioCtxRef.current.close(); } catch {}
+      audioCtxRef.current = null;
+    }
+  }
+
+  function discardAndRestart() {
+    sessionIdRef.current++;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch {}
+    }
+    if (streamRef.current) {
+      try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch {}
+      streamRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      try { audioCtxRef.current.close(); } catch {}
+      audioCtxRef.current = null;
+    }
+    if (timerRef.current) window.clearInterval(timerRef.current);
+    if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
+    if (audioUrl) {
+      try { URL.revokeObjectURL(audioUrl); } catch {}
+    }
+    setAudioUrl('');
+    setShareUrl('');
+    setCopied(false);
+    setTimerMs(0);
+    setIsRecording(false);
+    setStatus('');
+    void startRecording();
   }
 
   async function copyShare() {
@@ -159,47 +195,49 @@ export const RecordPage: React.FC = () => {
       <CardContent>
         <div className="flex items-center gap-3">
           <Button
-            variant="default"
-            onClick={startRecording}
-            disabled={isRecording}
-            className={isRecording ? 'animate-pulse' : ''}
+            variant={isRecording ? 'destructive' : 'default'}
+            onClick={isRecording ? stopRecording : startRecording}
+            className="transition-transform duration-150 hover:scale-[1.02] active:scale-95"
           >
-            <Mic className="mr-2 h-4 w-4" /> Start
+            {isRecording ? (
+              <>
+                <StopCircle className="mr-2 h-4 w-4" /> Stop
+              </>
+            ) : (
+              <>
+                <Mic className="mr-2 h-4 w-4" /> Start
+              </>
+            )}
           </Button>
-          <Button
-            variant={isRecording ? 'destructive' : 'secondary'}
-            onClick={stopRecording}
-            disabled={!isRecording}
-          >
-            <StopCircle className="mr-2 h-4 w-4" /> Stop
-          </Button>
+          {audioUrl && !isRecording ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={discardAndRestart}
+              className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30 transition-transform hover:scale-[1.02] active:scale-95"
+            >
+              <RotateCcw className="mr-2 h-4 w-4" /> Discard & Record Again
+            </Button>
+          ) : null}
           <div className="ml-auto inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
             <Timer className="h-4 w-4" />
             <span aria-live="polite">{formatTime(timerMs)}</span>
           </div>
         </div>
-        {/* Mic visualizer bar */}
+        {/* Live microphone waveform */}
         {isRecording ? (
-          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-            <div
-              className="h-full rounded-full bg-blue-500 transition-[width] duration-75 ease-out"
-              style={{ width: `${Math.min(100, Math.max(5, Math.round(levels * 160)))}%` }}
-            />
-          </div>
+          <LiveWaveform analyser={analyserRef.current} className="mt-3 reveal-in" />
         ) : null}
         {audioUrl ? (
           <AudioBox
             ref={audioRef}
             controls
             src={audioUrl}
-            className="mt-4"
+            className="mt-4 reveal-in"
             right={<span className="text-xs text-gray-500 dark:text-gray-400">Local preview</span>}
           />
-        ) : (
-          <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
-            <div className="flex items-center gap-2"><ShieldAlert className="h-4 w-4" /> No audio yet. Start recording to preview.</div>
-          </div>
-        )}
+        ) : null}
+        {audioUrl && !isRecording ? null : null}
         {shareUrl ? (
           <div className="mt-4 flex items-center gap-2">
             <Input readOnly value={shareUrl} aria-label="Share URL" />

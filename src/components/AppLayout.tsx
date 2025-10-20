@@ -11,11 +11,11 @@ export function AppLayout({ children }: { children: React.ReactNode }): JSX.Elem
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mx-auto max-w-5xl px-4 py-6"
+        className="mx-auto max-w-screen-2xl px-6 py-6"
       >
         {children}
       </motion.main>
-      <footer className="mx-auto max-w-5xl px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+      <footer className="mx-auto max-w-screen-2xl px-6 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
         Built with ❤️ by Agam
       </footer>
     </div>

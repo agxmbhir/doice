@@ -223,7 +223,7 @@ export const SharePage: React.FC = () => {
           </CardHeader>
           <CardContent>
             {/* Two-column layout: main content + right sidebar for comments */}
-            <div className="grid items-stretch gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="grid items-stretch gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(420px,38%)] 2xl:grid-cols-[minmax(0,1fr)_minmax(520px,40%)]">
               {/* Main column */}
               <div>
                 <AudioBox id="player" controls ref={audioRef} src={`/api/memos/${id}/audio`} onTimeUpdate={(t) => setTime(t)} right={<span className="text-xs text-gray-500 dark:text-gray-400">Server stream</span>} />
@@ -252,12 +252,12 @@ export const SharePage: React.FC = () => {
 
               {/* Sidebar column */}
               <aside className="lg:self-stretch">
-                <Card className="h-full flex flex-col">
+                <Card className="h-[860px] flex flex-col">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">Insights</CardTitle>
                     <CardDescription>Ask or review comments</CardDescription>
                   </CardHeader>
-                  <CardContent className="flex-1 flex flex-col">
+                  <CardContent className="flex-1 min-h-0 flex flex-col overflow-hidden">
                     {/* Tabs header */}
                     <div className="mb-3 inline-flex rounded-md border p-1 text-sm">
                       <button

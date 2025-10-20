@@ -47,7 +47,7 @@ export const TranscriptScroller: React.FC<TranscriptScrollerProps> = ({ lines, w
   }, [activeIndex]);
 
   return (
-    <ScrollArea className={cn('h-[560px] rounded-lg bg-card/30 overflow-hidden', className)} viewportRef={viewportRef}>
+    <ScrollArea className={cn('h-[640px] rounded-lg bg-card/30 overflow-hidden', className)} viewportRef={viewportRef}>
       <div className="divide-y">
         {lines.map((l, i) => (
           <React.Fragment key={i}>
