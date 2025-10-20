@@ -4,12 +4,45 @@
   "private": true,
   "description": "Instant voice memos with shareable links",
   "scripts": {
-    "dev": "node server.js",
+    "dev": "concurrently -k -n web,api -c green,blue \"vite\" \"node --watch server.js\"",
+    "dev:api": "node --watch server.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "start": "NODE_ENV=production node server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.676.0",
+    "@radix-ui/react-slot": "1.2.3",
+    "@wavesurfer/react": "^1.0.11",
+    "class-variance-authority": "0.7.1",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.2.3",
     "express": "^4.19.2",
-    "multer": "^1.4.5-lts.1"
+    "ffprobe-static": "^3.1.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "framer-motion": "^11.11.9",
+    "lucide-react": "^0.468.0",
+    "morgan": "^1.10.1",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.67.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2",
+    "tailwind-merge": "^2.5.3",
+    "tailwindcss-animate": "1.0.7",
+    "wavesurfer.js": "^7.11.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react-swc": "^3.7.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^8.2.2",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.8"
   }
 }
-
