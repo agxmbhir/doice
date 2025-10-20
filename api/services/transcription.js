@@ -44,12 +44,25 @@ function buildChaptersFromSegments(segments) {
   let curStart = null;
   let curEnd = null;
   let buf = '';
+  function formatChapterTitle(raw) {
+    const trimmed = String(raw || '').replace(/\s+/g, ' ').trim();
+    const sentence = (trimmed.split(/(?<=[.!?])\s+/)[0] || trimmed).trim();
+    const words = sentence.split(/\s+/).filter(Boolean);
+    const limited = words.slice(0, 6); // keep very short
+    const lowerSmall = new Set(['a','an','and','or','but','for','nor','of','on','in','to','the','at','by']);
+    const limited3 = limited.slice(0, 3);
+    const titled = limited3.map((w, i) => {
+      const lw = w.toLowerCase();
+      const keepLower = i !== 0 && lowerSmall.has(lw);
+      if (keepLower) return lw;
+      return lw.charAt(0).toUpperCase() + lw.slice(1);
+    });
+    const title = titled.join(' ');
+    return title || 'Chapter';
+  }
   const flush = () => {
     if (curStart == null || curEnd == null) return;
-    const raw = buf.trim().replace(/\s+/g, ' ');
-    const sentence = (raw.split(/(?<=[.!?])\s+/)[0] || raw).trim();
-    const words = sentence.split(/\s+/).slice(0, 10).join(' ');
-    const title = words || `Moment ${chapters.length + 1}`;
+    const title = formatChapterTitle(buf);
     chapters.push({ title, start: curStart, end: curEnd });
     buf = '';
     curStart = null;
@@ -70,6 +83,76 @@ function buildChaptersFromSegments(segments) {
   return chapters;
 }
 
+/**
+ * Attempt to summarize each chapter title using the LLM so they are
+ * true summaries of the chunk rather than raw transcript snippets.
+ * Fallback to existing titles if the model/key is unavailable.
+ */
+async function summarizeChapterTitles(chapters, segments) {
+  try {
+    if (!openai) return chapters;
+    if (!Array.isArray(chapters) || chapters.length === 0) return chapters;
+
+    // Build compact texts per chapter (200-300 chars) from segments in range
+    const items = chapters.map((c) => {
+      const textParts = [];
+      for (const s of segments || []) {
+        const sStart = typeof s.start === 'number' ? s.start : 0;
+        const sEnd = typeof s.end === 'number' ? s.end : sStart;
+        if (sEnd < c.start || sStart > c.end) continue;
+        const t = (s.text || '').trim();
+        if (t) textParts.push(t);
+      }
+      const full = textParts.join(' ').replace(/\s+/g, ' ').trim();
+      const trimmed = full.slice(0, 360);
+      return { start: c.start, end: c.end, text: trimmed, fallback: c.title };
+    });
+
+    const prompt = [
+      'You will receive a list of chapter texts from a voice memo.',
+      'Return a JSON array `titles` with one short, punchy title per item (max 6 words each).',
+      'Use noun phrases, avoid filler and quotes. Example: "Roadmap Decisions", "Onboarding Pain Points".',
+    ].join(' ');
+
+    const user = {
+      role: 'user',
+      content:
+        prompt +
+        '\n\nChapters:\n' +
+        items
+          .map(
+            (it, i) =>
+              `#${i + 1} (${Math.floor(it.start)}-${Math.floor(it.end)}s)\n${it.text || it.fallback}`
+          )
+          .join('\n\n'),
+    };
+
+    // Prefer a small, fast model. Fall back gracefully if anything fails
+    const resp = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.3,
+      messages: [
+        { role: 'system', content: 'You are a concise titling assistant. Respond with JSON only.' },
+        user,
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 300,
+    });
+
+    const raw = resp?.choices?.[0]?.message?.content || '';
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {}
+    const titles = Array.isArray(parsed?.titles) ? parsed.titles : [];
+    if (!titles.length) return chapters;
+
+    return chapters.map((c, i) => ({ ...c, title: String(titles[i] || c.title).trim() || c.title }));
+  } catch {
+    return chapters;
+  }
+}
+
 async function transcribeWithOpenAI(filePath) {
   if (!openai) return null;
   const maxAttempts = 3;
@@ -87,7 +170,11 @@ async function transcribeWithOpenAI(filePath) {
           : segments.map((s) => (s.text || '').trim()).join(' ').trim();
       const words = buildWordTimingsFromSegments(segments);
       const lines = groupWordsIntoLines(words);
-      const chapters = buildChaptersFromSegments(segments);
+      let chapters = buildChaptersFromSegments(segments);
+      // Try to improve chapter titles with an LLM summary; ignore failures
+      try {
+        chapters = await summarizeChapterTitles(chapters, segments);
+      } catch {}
       return { text, segments, words, lines, chapters };
     } catch (e) {
       try {

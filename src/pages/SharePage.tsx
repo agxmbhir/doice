@@ -4,8 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../co
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Separator } from '../components/ui/separator';
-import { MessageCircle, SendHorizontal, X } from 'lucide-react';
+import { MessageCircle, SendHorizontal, X, MessageSquareText } from 'lucide-react';
 import { AudioBox } from '../components/AudioBox';
+import { TranscriptScroller } from '../components/transcript/TranscriptScroller';
+import { ChapterSummary } from '../components/transcript/ChapterSummary';
+import { ChapterChips } from '../components/transcript/ChapterChips';
+import { ChatMessage, type ChatMsg } from '../components/ChatMessage';
+import { CommentThread, type CommentItem } from '../components/CommentThread';
 
 async function fetchJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -26,43 +31,16 @@ function formatTime(msOrSec: number): string {
 
 function Chapters({ chapters, currentTime, onSeek }: { chapters: Chapter[]; currentTime: number; onSeek: (t: number) => void }) {
   return (
-    <div id="chapters" className="chapters">
-      {chapters.map((c, i) => (
-        <button key={i} className={currentTime >= c.start && currentTime <= c.end ? 'chapter active' : 'chapter'} onClick={() => onSeek(c.start)}>
-          {c.title}
-        </button>
-      ))}
+    <div className="space-y-2">
+      <ChapterChips items={chapters} currentTime={currentTime} onSeek={onSeek} />
     </div>
   );
 }
 
-function Transcript({ lines, words, currentTime, onSeek, onMouseUp, selectedRange }: { lines: Line[]; words: Word[]; currentTime: number; onSeek: (t: number) => void; onMouseUp?: () => void; selectedRange?: { from: number; to: number } | null }) {
+function Transcript({ lines, words, chapters, currentTime, onSeek, onMouseUp }: { lines: Line[]; words: Word[]; chapters: Chapter[]; currentTime: number; onSeek: (t: number) => void; onMouseUp?: () => void }) {
   return (
-    <div id="transcript" className="space-y-2" onMouseUp={onMouseUp}>
-      {lines.map((line, idxLine) => (
-        <div
-          key={idxLine}
-          className={currentTime >= line.start && currentTime <= line.end ? 'rounded-md bg-blue-50/60 px-3 py-2 dark:bg-blue-950/30' : 'rounded-md px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-900'}
-          onClick={() => onSeek(line.start)}
-        >
-          {words.slice(line.from, line.to + 1).map((w, idxWord) => {
-            const globalIdx = line.from + idxWord;
-            const active = currentTime >= w.start && currentTime <= w.end;
-            const inSel = selectedRange && globalIdx >= selectedRange.from && globalIdx <= selectedRange.to;
-            return (
-              <span
-                key={`${idxLine}-${idxWord}`}
-                data-word-idx={globalIdx}
-                className={(inSel ? 'bg-yellow-200 dark:bg-yellow-800 ' : '') + (active ? 'text-blue-600 dark:text-blue-400 ' : '')}
-                onClick={(e) => { e.stopPropagation(); onSeek(w.start); }}
-              >
-                {w.text}
-                {idxWord < line.to - line.from ? ' ' : ''}
-              </span>
-            );
-          })}
-        </div>
-      ))}
+    <div id="transcript" onMouseUp={onMouseUp}>
+      <TranscriptScroller lines={lines} words={words} currentTime={currentTime} onSeek={onSeek} chapters={chapters} />
     </div>
   );
 }
@@ -79,8 +57,10 @@ export const SharePage: React.FC = () => {
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [selection, setSelection] = useState<{ from: number; to: number; start: number; end: number; text: string } | null>(null);
   const [activeSidebarTab, setActiveSidebarTab] = useState<'ask' | 'comments'>('ask');
-  const [askMessages, setAskMessages] = useState<Array<{ id: string; role: 'user' | 'assistant'; content: string; ts: number }>>([]);
+  const [askMessages, setAskMessages] = useState<ChatMsg[]>([]);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const askScrollRef = useRef<HTMLDivElement | null>(null);
+  const askScrollEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -184,6 +164,13 @@ export const SharePage: React.FC = () => {
     return map;
   }, [commentsSorted]);
 
+  useEffect(() => {
+    // Auto-scroll Ask chat to bottom on new messages
+    const el = askScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [askMessages]);
+
   async function postComment(partial: { text: string; parentId?: string | null; at?: number; lineIndex?: number; start?: number; end?: number }) {
     if (!id) return;
     const res = await fetch(`/api/memos/${id}/comments`, {
@@ -236,7 +223,7 @@ export const SharePage: React.FC = () => {
           </CardHeader>
           <CardContent>
             {/* Two-column layout: main content + right sidebar for comments */}
-            <div className="grid gap-6 lg:grid-cols-[1fr_440px]">
+            <div className="grid items-stretch gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
               {/* Main column */}
               <div>
                 <AudioBox id="player" controls ref={audioRef} src={`/api/memos/${id}/audio`} onTimeUpdate={(t) => setTime(t)} right={<span className="text-xs text-gray-500 dark:text-gray-400">Server stream</span>} />
@@ -249,10 +236,10 @@ export const SharePage: React.FC = () => {
                       <Transcript
                         lines={transcript.lines || []}
                         words={transcript.words || []}
+                        chapters={transcript.chapters || []}
                         currentTime={time}
                         onSeek={seek}
                         onMouseUp={computeSelectedRange}
-                        selectedRange={selection ? { from: selection.from, to: selection.to } : null}
                       />
                     </div>
                   </div>
@@ -264,13 +251,13 @@ export const SharePage: React.FC = () => {
               </div>
 
               {/* Sidebar column */}
-              <aside className="lg:sticky lg:top-24 lg:h-fit">
-                <Card>
+              <aside className="lg:self-stretch">
+                <Card className="h-full flex flex-col">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">Insights</CardTitle>
                     <CardDescription>Ask or review comments</CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="flex-1 flex flex-col">
                     {/* Tabs header */}
                     <div className="mb-3 inline-flex rounded-md border p-1 text-sm">
                       <button
@@ -291,27 +278,38 @@ export const SharePage: React.FC = () => {
 
                     {/* Ask tab */}
                     {activeSidebarTab === 'ask' ? (
-                      <div className="space-y-3">
+                      <div className="flex flex-1 min-h-0 flex-col">
                         {transcript.status === 'ready' ? (
                           <>
-                            <div className="flex gap-2">
+                            <div ref={askScrollRef} className="nice-scroll flex-1 overflow-auto pr-1">
+                              {askMessages.length === 0 ? (
+                                <div className="flex h-full items-center justify-center py-10">
+                                  <div className="text-center text-sm text-muted-foreground">
+                                    <MessageSquareText className="mx-auto mb-2 h-6 w-6 opacity-70" />
+                                    <div>Ask anything about this memo.</div>
+                                    <div className="mt-1">Try “Summarize the last minute.”</div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="space-y-2">
+                                  {askMessages.map((m) => (
+                                    <ChatMessage key={m.id} message={m} />
+                                  ))}
+                                  <div ref={askScrollEndRef} />
+                                </div>
+                              )}
+                            </div>
+                            <div className="mt-2 flex items-center gap-2 self-end w-full">
                               <Input
                                 value={question}
                                 onChange={(e) => setQuestion(e.target.value)}
                                 placeholder="Ask a question about this memo…"
-                                className="w-full"
+                                className="flex-1"
                                 onKeyDown={(e) => { if ((e as any).key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
                               />
                               <Button onClick={ask} disabled={asking || !question.trim()} variant="secondary">
                                 <SendHorizontal className="mr-2 h-4 w-4" /> {asking ? 'Asking…' : 'Ask'}
                               </Button>
-                            </div>
-                            <div className="max-h-80 space-y-2 overflow-auto pr-1">
-                              {askMessages.map((m) => (
-                                <div key={m.id} className={(m.role === 'user' ? 'ml-8 rounded-lg bg-primary/10 p-2' : 'mr-8 rounded-lg border p-2 dark:border-gray-800') + ' text-sm'}>
-                                  {m.content}
-                                </div>
-                              ))}
                             </div>
                           </>
                         ) : (
@@ -322,96 +320,51 @@ export const SharePage: React.FC = () => {
 
                     {/* Comments tab */}
                     {activeSidebarTab === 'comments' ? (
-                      <div className="space-y-3">
-                        {selection ? (
-                          <div className="relative rounded-lg border border-dashed p-3">
-                            <button
-                              type="button"
-                              aria-label="Clear selection"
-                              className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-accent"
-                              onClick={() => setSelection(null)}
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                            <div className="mb-2 text-xs text-muted-foreground">Selected {formatTime(selection.start)}–{formatTime(selection.end)}</div>
-                            <div className="mb-2 truncate text-sm">“{selection.text.slice(0, 120)}{selection.text.length > 120 ? '…' : ''}”</div>
-                            <div className="flex gap-2">
-                              <Input value={commentDrafts['selection'] || ''} onChange={(e) => setCommentDrafts((d) => ({ ...d, selection: e.target.value }))} placeholder="Comment on selected…" />
-                              <Button
-                                onClick={async () => {
-                                  const text = (commentDrafts['selection'] || '').trim();
-                                  if (!text) return;
-                                  await postComment({ text, start: selection.start, end: selection.end });
-                                  setCommentDrafts((d) => ({ ...d, selection: '' }));
-                                  setSelection(null);
-                                }}
-                                disabled={!(commentDrafts['selection'] || '').trim()}
-                              >
-                                <MessageCircle className="mr-2 h-4 w-4" /> Post
-                              </Button>
-                            </div>
+                      <div className="flex flex-1 min-h-0 flex-col space-y-3">
+                        {((commentsByParent.get(null) || []).length === 0) ? (
+                          <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                            No comments yet. Select transcript text to comment, or add one at the current time.
                           </div>
                         ) : null}
-                        {(commentsByParent.get(null) || []).map((c) => (
-                          <div key={c.id} className="rounded-lg border bg-muted/30 p-3 text-sm">
-                            <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-                              {'start' in (c as any) && typeof (c as any).start === 'number' && typeof (c as any).end === 'number' ? (
-                                <button className="underline" onClick={() => seek((c as any).start)}>
-                                  {formatTime(Math.floor((c as any).start))}–{formatTime(Math.floor((c as any).end))}
-                                </button>
-                              ) : (
-                                <button className="underline" onClick={() => seek((c as any).t || 0)}>{formatTime(Math.floor((c as any).t || 0))}</button>
-                              )}
-                              <span>{new Date((c as any).createdAt).toLocaleString()}</span>
-                            </div>
-                            <div className="whitespace-pre-wrap">{c.text}</div>
-                            <div className="mt-2">
-                              {replyDrafts[c.id] === undefined ? (
-                                <Button size="sm" variant="ghost" onClick={() => setReplyDrafts((d) => ({ ...d, [c.id]: '' }))}>Reply</Button>
-                              ) : (
-                                <div className="flex gap-2">
-                                  <Input value={replyDrafts[c.id] || ''} onChange={(e) => setReplyDrafts((d) => ({ ...d, [c.id]: e.target.value }))} placeholder="Write a reply…" />
-                                  <Button
-                                    onClick={async () => {
-                                      const text = (replyDrafts[c.id] || '').trim();
-                                      if (!text) return;
-                                      await postComment({ text, parentId: c.id, at: (c as any).t });
-                                      setReplyDrafts((d) => { const nd = { ...d }; delete nd[c.id]; return nd; });
-                                    }}
-                                    disabled={!(replyDrafts[c.id] || '').trim()}
-                                  >
-                                    <MessageCircle className="mr-2 h-4 w-4" /> Post
-                                  </Button>
-                                  <Button variant="ghost" onClick={() => setReplyDrafts((d) => { const nd = { ...d }; delete nd[c.id]; return nd; })}>Cancel</Button>
-                                </div>
-                              )}
-                            </div>
-                            {(commentsByParent.get(c.id) || []).map((r) => (
-                              <div key={r.id} className="mt-3 rounded-lg border bg-background p-3 pl-4 text-sm dark:border-gray-800">
-                                <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-                                  {'start' in (r as any) && typeof (r as any).start === 'number' && typeof (r as any).end === 'number' ? (
-                                    <button className="underline" onClick={() => seek((r as any).start)}>
-                                      {formatTime(Math.floor((r as any).start))}–{formatTime(Math.floor((r as any).end))}
-                                    </button>
-                                  ) : (
-                                    <button className="underline" onClick={() => seek((r as any).t || 0)}>{formatTime(Math.floor((r as any).t || 0))}</button>
-                                  )}
-                                  <span>{new Date((r as any).createdAt).toLocaleString()}</span>
-                                </div>
-                                <div className="whitespace-pre-wrap">{r.text}</div>
-                              </div>
-                            ))}
-                          </div>
-                        ))}
-                        <div className="rounded-lg border border-dashed p-3">
-                          <div className="mb-2 text-xs text-muted-foreground">Add a comment at {formatTime(Math.floor(time))}</div>
+                        <div className="nice-scroll flex-1 overflow-auto pr-1">
+                          <CommentThread
+                            items={commentsSorted as unknown as CommentItem[]}
+                            byParent={commentsByParent as unknown as Map<string | null, CommentItem[]>}
+                            onSeek={(t) => seek(t)}
+                            onReply={async (parentId, text, t) => {
+                              await postComment({ text, parentId, at: typeof t === 'number' ? t : Math.floor(time) });
+                            }}
+                          />
+                        </div>
+                        <div className="relative rounded-lg border border-dashed p-3">
+                          {selection ? (
+                            <>
+                              <button
+                                type="button"
+                                aria-label="Clear selection"
+                                className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-accent"
+                                onClick={() => setSelection(null)}
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                              <div className="mb-2 text-xs text-muted-foreground">Selected {formatTime(selection.start)}–{formatTime(selection.end)}</div>
+                              <div className="mb-2 truncate text-sm">“{selection.text.slice(0, 120)}{selection.text.length > 120 ? '…' : ''}”</div>
+                            </>
+                          ) : (
+                            <div className="mb-2 text-xs text-muted-foreground">Add a comment at {formatTime(Math.floor(time))}</div>
+                          )}
                           <div className="flex gap-2">
-                            <Input value={commentDrafts['sidebar'] || ''} onChange={(e) => setCommentDrafts((d) => ({ ...d, sidebar: e.target.value }))} placeholder="Add a comment…" />
+                            <Input value={commentDrafts['sidebar'] || ''} onChange={(e) => setCommentDrafts((d) => ({ ...d, sidebar: e.target.value }))} placeholder={selection ? 'Comment on selected…' : 'Add a comment…'} />
                             <Button
                               onClick={async () => {
                                 const text = (commentDrafts['sidebar'] || '').trim();
                                 if (!text) return;
-                                await postComment({ text, at: Math.floor(time) });
+                                if (selection) {
+                                  await postComment({ text, start: selection.start, end: selection.end });
+                                  setSelection(null);
+                                } else {
+                                  await postComment({ text, at: Math.floor(time) });
+                                }
                                 setCommentDrafts((d) => ({ ...d, sidebar: '' }));
                               }}
                               disabled={!(commentDrafts['sidebar'] || '').trim()}
