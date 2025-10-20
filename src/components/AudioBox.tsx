@@ -47,37 +47,47 @@ export const AudioBox = React.forwardRef<any, AudioBoxProps>(
       };
     }, [useWaveform, onTimeUpdate]);
 
-    // Expose a small control API through the ref for both modes
-    React.useImperativeHandle(ref, () => {
-      if (useWaveform && wavesurferRef.current) {
+    // Expose a small control API through the ref for both modes (always use latest refs)
+    React.useImperativeHandle(ref, () => ({
+      seekTo: (t: number) => {
         const ws = wavesurferRef.current;
-        return {
-          seekTo: (t: number) => {
-            if (typeof ws.setTime === 'function') {
-              ws.setTime(t);
-            } else if (typeof ws.seekTo === 'function' && typeof ws.getDuration === 'function') {
-              const dur = ws.getDuration() || 1;
-              ws.seekTo(Math.max(0, Math.min(1, t / dur)));
-            }
-            if (typeof ws.play === 'function') ws.play();
-          },
-          play: () => { if (typeof ws.play === 'function') ws.play(); },
-          getCurrentTime: () => (typeof ws.getCurrentTime === 'function' ? ws.getCurrentTime() : 0),
-        };
-      }
-      const el = nativeAudioRef.current;
-      return {
-        seekTo: (t: number) => {
-          if (!el) return;
-          el.currentTime = t;
-          void el.play();
-        },
-        play: () => { if (el) void el.play(); },
-        getCurrentTime: () => (el ? el.currentTime : 0),
-        // Also expose the raw element for compatibility
-        element: el,
-      };
-    }, [useWaveform]);
+        if (useWaveform && ws) {
+          if (typeof ws.setTime === 'function') {
+            ws.setTime(t);
+          } else if (typeof ws.seekTo === 'function' && typeof ws.getDuration === 'function') {
+            const dur = ws.getDuration() || 1;
+            ws.seekTo(Math.max(0, Math.min(1, t / dur)));
+          }
+          if (typeof ws.play === 'function') ws.play();
+          return;
+        }
+        const el = nativeAudioRef.current;
+        if (!el) return;
+        el.currentTime = t;
+        void el.play();
+      },
+      play: () => {
+        const ws = wavesurferRef.current;
+        if (useWaveform && ws && typeof ws.play === 'function') {
+          ws.play();
+          return;
+        }
+        const el = nativeAudioRef.current;
+        if (el) void el.play();
+      },
+      getCurrentTime: () => {
+        const ws = wavesurferRef.current;
+        if (useWaveform && ws && typeof ws.getCurrentTime === 'function') {
+          return ws.getCurrentTime();
+        }
+        const el = nativeAudioRef.current;
+        return el ? el.currentTime : 0;
+      },
+      // Also expose the raw element for compatibility
+      get element() {
+        return nativeAudioRef.current;
+      },
+    }), [useWaveform]);
 
     return (
       <div
@@ -137,8 +147,6 @@ export const AudioBox = React.forwardRef<any, AudioBoxProps>(
           <audio
             ref={(node) => {
               nativeAudioRef.current = node;
-              if (typeof ref === 'function') ref(node as any);
-              else if (ref && typeof ref === 'object') (ref as React.MutableRefObject<any>).current = node as any;
             }}
             src={src}
             controls={controls}
