@@ -67,25 +67,17 @@ export const TranscriptLine: React.FC<TranscriptLineProps> = ({
         {formatTime(start)}
       </span>
       <div className="min-w-0 flex-1 text-sm leading-snug text-foreground/90">
-        {blurbWords.map((w, i) => {
-          const isCurrent = active && typeof currentTime === 'number' && currentTime >= w.start && currentTime <= w.end;
-          const isPlayed = active && typeof currentTime === 'number' && currentTime > w.end;
-          return (
-            <span
-              key={i}
-              data-word-idx={baseWordIndex + i}
-              className={cn(
-                'word inline rounded-sm',
-                isCurrent ? 'bg-primary/15 text-primary px-0.5' : '',
-                isPlayed ? '' : (active ? 'opacity-90' : 'opacity-100')
-              )}
-              onClick={(e) => { e.stopPropagation(); onSeek(w.start); }}
-            >
-              {w.text}
-              {i < blurbWords.length - 1 ? ' ' : ''}
-            </span>
-          );
-        })}
+        {blurbWords.map((w, i) => (
+          <span
+            key={i}
+            data-word-idx={baseWordIndex + i}
+            className={cn('word inline')}
+            onClick={(e) => { e.stopPropagation(); onSeek(w.start); }}
+          >
+            {w.text}
+            {i < blurbWords.length - 1 ? ' ' : ''}
+          </span>
+        ))}
         {truncated ? '…' : ''}
       </div>
     </motion.button>

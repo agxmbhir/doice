@@ -270,7 +270,6 @@ module.exports = {
   groupWordsIntoLines,
   buildChaptersFromSegments,
   transcribeWithOpenAI,
-  extractSmartCommentsFromLines,
   sleep,
 };
 

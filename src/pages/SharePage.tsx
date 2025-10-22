@@ -10,6 +10,7 @@ import { AudioBox } from '../components/AudioBox';
 import { TranscriptScroller } from '../components/transcript/TranscriptScroller';
 import { ChapterSummary } from '../components/transcript/ChapterSummary';
 import { ChapterChips } from '../components/transcript/ChapterChips';
+import { DownloadTranscriptButton } from '../components/DownloadTranscriptButton';
 import { ChatMessage, type ChatMsg } from '../components/ChatMessage';
 import { CommentThread, type CommentItem } from '../components/CommentThread';
 
@@ -66,8 +67,24 @@ export const SharePage: React.FC = () => {
   const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     if (!id) return;
-    fetchJSON(`/api/memos/${id}`).then(setMeta).catch(() => setMeta({ error: true }));
+    (async () => {
+      for (;;) {
+        try {
+          const m = await fetchJSON(`/api/memos/${id}`);
+          if (cancelled) return;
+          setMeta(m);
+          if (m && (m as any).audioReady) return;
+        } catch {
+          if (cancelled) return;
+          setMeta({ error: true } as any);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    })();
+    return () => { cancelled = true; };
   }, [id]);
 
   useEffect(() => {
@@ -280,13 +297,35 @@ export const SharePage: React.FC = () => {
             <div className="grid items-stretch gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(420px,38%)] 2xl:grid-cols-[minmax(0,1fr)_minmax(520px,40%)]">
               {/* Main column */}
               <div>
-                <AudioBox id="player" controls ref={audioRef} src={`/api/memos/${id}/audio`} onTimeUpdate={(t) => setTime(t)} right={<span className="text-xs text-gray-500 dark:text-gray-400">Server stream</span>} />
+                {meta && (meta as any).audioReady ? (
+                  <AudioBox
+                    id="player"
+                    controls
+                    ref={audioRef}
+                    src={`/api/memos/${id}/audio`}
+                    onTimeUpdate={(t) => setTime(t)}
+                    right={<span className="text-xs text-gray-500 dark:text-gray-400">Server stream</span>}
+                  />
+                ) : (
+                  <div className="rounded-lg border p-3 text-sm text-muted-foreground">Preparing audio…</div>
+                )}
                 <Separator className="my-4" />
                 {transcript.status === 'ready' ? (
                   <div className="space-y-3">
                     <Chapters chapters={transcript.chapters || []} currentTime={time} onSeek={seek} />
-                    {null}
                     <div className="rounded-lg border p-3">
+                      <div className="mb-2 flex items-center justify-between px-1 text-sm text-gray-600 dark:text-gray-300">
+                        <div className="inline-flex items-center gap-2">
+                          <span>Transcript</span>
+                        </div>
+                        <DownloadTranscriptButton
+                          resolveLines={() => (transcript.lines || [])}
+                          filename={`memo-${id || 'audio'}-transcript.txt`}
+                          variant="ghost"
+                          size="icon"
+                          iconOnly
+                        />
+                      </div>
                       <Transcript
                         lines={transcript.lines || []}
                         words={transcript.words || []}
@@ -306,7 +345,7 @@ export const SharePage: React.FC = () => {
 
               {/* Sidebar column */}
               <aside className="lg:self-stretch">
-                <Card className="h-[860px] flex flex-col">
+                <Card className="h-full flex flex-col">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">Insights</CardTitle>
                     <CardDescription>Ask or review comments</CardDescription>

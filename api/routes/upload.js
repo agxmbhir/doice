@@ -4,8 +4,8 @@ const fs = require('fs');
 const multer = require('multer');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { uploadsDir, s3, s3Bucket, s3Region, s3PublicBase } = require('../config');
-const { saveMemoToS3, getComments, saveComments } = require('../services/storage');
-const { transcribeWithOpenAI, extractSmartCommentsFromLines } = require('../services/transcription');
+const { saveMemoToS3 } = require('../services/storage');
+const { transcribeWithOpenAI } = require('../services/transcription');
 
 const router = express.Router();
 const storage = multer.memoryStorage();
@@ -14,41 +14,56 @@ const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file' });
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const id = (req.body && typeof req.body.id === 'string' && req.body.id.trim()) || (Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
     const ext = (req.file.originalname.split('.').pop() || 'webm').toLowerCase();
     const filename = `${id}.${ext}`;
 
-    let publicUrl = '';
-    if (s3 && s3Bucket) {
-      const key = `memos/${filename}`;
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: s3Bucket,
-          Key: key,
-          Body: req.file.buffer,
-          ContentType: req.file.mimetype || 'audio/webm',
-          ACL: 'public-read',
-        })
-      );
-      publicUrl = s3PublicBase ? `${s3PublicBase.replace(/\/$/, '')}/${key}` : `https://${s3Bucket}.s3.${s3Region}.amazonaws.com/${key}`;
-    } else {
-      const filePath = path.join(uploadsDir, filename);
-      await fs.promises.writeFile(filePath, req.file.buffer);
-      publicUrl = `/u/${filename}`;
-    }
-
     const createdAt = Date.now();
+    // Write a stub meta immediately so the link can be shown instantly
     await saveMemoToS3(id, {
       id,
       filename,
-      url: publicUrl,
-      audioUrl: publicUrl,
+      url: '',
+      audioUrl: '',
       createdAt,
+      audioReady: false,
       transcript: { status: process.env.OPENAI_API_KEY ? 'processing' : 'unavailable' },
     });
 
+    // Kick off upload + transcription in the background
     (async () => {
+      let publicUrl = '';
       try {
+        if (s3 && s3Bucket) {
+          const key = `memos/${filename}`;
+          await s3.send(
+            new PutObjectCommand({
+              Bucket: s3Bucket,
+              Key: key,
+              Body: req.file.buffer,
+              ContentType: req.file.mimetype || 'audio/webm',
+              ACL: 'public-read',
+            })
+          );
+          publicUrl = s3PublicBase ? `${s3PublicBase.replace(/\/$/, '')}/${key}` : `https://${s3Bucket}.s3.${s3Region}.amazonaws.com/${key}`;
+        } else {
+          const filePath = path.join(uploadsDir, filename);
+          await fs.promises.writeFile(filePath, req.file.buffer);
+          publicUrl = `/u/${filename}`;
+        }
+
+        // Mark audio as available
+        await saveMemoToS3(id, {
+          id,
+          filename,
+          url: publicUrl,
+          audioUrl: publicUrl,
+          createdAt,
+          audioReady: true,
+          transcript: { status: process.env.OPENAI_API_KEY ? 'processing' : 'unavailable' },
+        });
+
+        // Prepare local path for transcription
         let localPath = '';
         if (publicUrl.startsWith('/u/')) {
           localPath = path.join(uploadsDir, filename);
@@ -57,9 +72,10 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           await fs.promises.writeFile(tempPath, req.file.buffer);
           localPath = tempPath;
         }
+
         const t = await transcribeWithOpenAI(localPath);
         if (!t) {
-          await saveMemoToS3(id, { id, filename, url: publicUrl, audioUrl: publicUrl, createdAt, transcript: { status: 'error' } });
+          await saveMemoToS3(id, { id, filename, url: publicUrl, audioUrl: publicUrl, createdAt, audioReady: true, transcript: { status: 'error' } });
           return;
         }
         await saveMemoToS3(id, {
@@ -68,6 +84,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           url: publicUrl,
           audioUrl: publicUrl,
           createdAt,
+          audioReady: true,
           transcript: {
             status: 'ready',
             text: t.text,
@@ -78,41 +95,17 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           },
           segments: t.segments,
         });
-        try {
-          if (Array.isArray(t.lines) && t.lines.length) {
-            const smart = extractSmartCommentsFromLines(t.lines);
-            if (smart.length) {
-              const existing = await getComments(id).catch(() => []);
-              const now = Date.now();
-              const merged = existing.slice();
-              const seen = new Set(existing.map((c) => `${c.lineIndex ?? ''}|${(c.text || '').toLowerCase()}`));
-              for (const s of smart) {
-                const key = `${s.lineIndex ?? ''}|${(s.text || '').toLowerCase()}`;
-                if (seen.has(key)) continue;
-                seen.add(key);
-                merged.push({
-                  id: (now + Math.floor(Math.random() * 1e6)).toString(36),
-                  parentId: null,
-                  at: typeof s.at === 'number' ? s.at : undefined,
-                  lineIndex: s.lineIndex,
-                  text: s.text,
-                  createdAt: now,
-                });
-              }
-              if (merged.length !== existing.length) {
-                await saveComments(id, merged);
-              }
-            }
-          }
-        } catch {}
+
+        // smart autogenerated comments removed
       } catch (e) {
         try {
-          await saveMemoToS3(id, { id, filename, url: publicUrl, audioUrl: publicUrl, createdAt, transcript: { status: 'error' } });
+          await saveMemoToS3(id, { id, filename, url: '', audioUrl: '', createdAt, audioReady: false, transcript: { status: 'error' } });
         } catch {}
       }
     })();
 
-    res.json({ id, url: publicUrl, shareUrl: `${process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173'}/s/${id}` });
+    // Respond immediately with the share URL
+    res.json({ id, url: '', shareUrl: `${process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173'}/s/${id}` });
   } catch (e) {
     res.status(500).json({ error: 'Upload failed' });
   }

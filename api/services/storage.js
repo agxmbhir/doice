@@ -11,6 +11,7 @@ async function saveMemoToS3(id, meta) {
       Body: JSON.stringify(meta),
       ContentType: 'application/json',
       ACL: 'public-read',
+      CacheControl: 'no-cache, no-store, must-revalidate',
     })
   );
 }

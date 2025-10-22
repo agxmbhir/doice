@@ -21,11 +21,9 @@ export const AudioBox = React.forwardRef<any, AudioBoxProps>(
       // Whenever the source changes, try the waveform again.
       setUseWaveform(true);
       wavesurferRef.current = null;
-      // Fallback to native if Wavesurfer fails to init within a reasonable time window
-      const id = setTimeout(() => {
-        if (!wavesurferRef.current) setUseWaveform(false);
-      }, 3000);
-      return () => clearTimeout(id);
+    // Do not auto-fallback based on time; long files can take time to decode.
+    // We'll only fallback on explicit onError from Wavesurfer.
+    return () => {};
     }, [src]);
 
     // Hook up time update events for waveform player
@@ -113,7 +111,7 @@ export const AudioBox = React.forwardRef<any, AudioBoxProps>(
                 if (!ws) return;
                 ws.isPlaying() ? ws.pause() : ws.play();
               }}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow hover:opacity-90"
+              className={cn('inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow hover:opacity-90', !wavesurferRef.current && 'opacity-50 pointer-events-none')}
             >
               {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
             </button>

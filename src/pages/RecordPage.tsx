@@ -195,13 +195,17 @@ export const RecordPage: React.FC = () => {
       <CardContent>
         <div className="flex items-center gap-3">
           <Button
-            variant={isRecording ? 'destructive' : 'default'}
-            onClick={isRecording ? stopRecording : startRecording}
+            variant={(isRecording || (audioUrl && !isRecording)) ? 'destructive' : 'default'}
+            onClick={isRecording ? stopRecording : (audioUrl ? discardAndRestart : startRecording)}
             className="transition-transform duration-150 hover:scale-[1.02] active:scale-95"
           >
             {isRecording ? (
               <>
                 <StopCircle className="mr-2 h-4 w-4" /> Stop
+              </>
+            ) : audioUrl ? (
+              <>
+                <RotateCcw className="mr-2 h-4 w-4" /> Discard & Record Again
               </>
             ) : (
               <>
@@ -209,16 +213,6 @@ export const RecordPage: React.FC = () => {
               </>
             )}
           </Button>
-          {audioUrl && !isRecording ? (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={discardAndRestart}
-              className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30 transition-transform hover:scale-[1.02] active:scale-95"
-            >
-              <RotateCcw className="mr-2 h-4 w-4" /> Discard & Record Again
-            </Button>
-          ) : null}
           <div className="ml-auto inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
             <Timer className="h-4 w-4" />
             <span aria-live="polite">{formatTime(timerMs)}</span>
@@ -239,7 +233,7 @@ export const RecordPage: React.FC = () => {
         ) : null}
         {audioUrl && !isRecording ? null : null}
         {shareUrl ? (
-          <div className="mt-4 flex items-center gap-2">
+          <div className="mt-4 flex items-center gap-2 reveal-in">
             <Input readOnly value={shareUrl} aria-label="Share URL" />
             <Button onClick={copyShare} variant="secondary">
               {copied ? (
